@@ -22,6 +22,9 @@
 
       # NixOS modules - use via inputs.jinx-modules.nixosModules.*
       nixosModules = {
+        # Cloudflare Tunnel for SSH with sops-nix secrets
+        cloudflare-ssh = ./modules/nixos/cloudflare-ssh;
+
         # Deploy-rs target configuration options
         deploy = ./modules/nixos/deploy;
 
@@ -40,6 +43,7 @@
         # Import all modules at once
         default = { ... }: {
           imports = [
+            self.nixosModules.cloudflare-ssh
             self.nixosModules.deploy
             self.nixosModules.netbird
             self.nixosModules.victoriametrics
