@@ -31,6 +31,9 @@
         # VictoriaMetrics cluster components (vmauth, vmstorage, vmselect, vminsert)
         victoriametrics = ./modules/nixos/victoriametrics;
 
+        # Service watcher - monitors and restarts failed services
+        watcher = ./modules/nixos/watcher;
+
         # Zabbix Agent 2 with TLS/PSK support
         zabbixAgent2 = ./modules/nixos/zabbixAgent2;
 
@@ -40,6 +43,7 @@
             self.nixosModules.deploy
             self.nixosModules.netbird
             self.nixosModules.victoriametrics
+            self.nixosModules.watcher
             self.nixosModules.zabbixAgent2
           ];
         };
