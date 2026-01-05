@@ -31,6 +31,9 @@
         # Netbird mesh networking - extends nixpkgs netbird with SSH options
         netbird = ./modules/nixos/netbird;
 
+        # OpenBao - extends nixpkgs openbao with flexible config options
+        openbao = ./modules/nixos/openbao;
+
         # VictoriaMetrics cluster components (vmauth, vmstorage, vmselect, vminsert)
         victoriametrics = ./modules/nixos/victoriametrics;
 
@@ -46,6 +49,7 @@
             self.nixosModules.cloudflare-ssh
             self.nixosModules.deploy
             self.nixosModules.netbird
+            self.nixosModules.openbao
             self.nixosModules.victoriametrics
             self.nixosModules.watcher
             self.nixosModules.zabbixAgent2
