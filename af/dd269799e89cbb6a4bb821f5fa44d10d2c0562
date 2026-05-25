@@ -1,0 +1,19 @@
+lib/flake/default.nix
+  s_34b91e56a03ba2::t_6d091dff55412b 207
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.1",
+  "base_commit_sha": "afdd269799e89cbb6a4bb821f5fa44d10d2c0562",
+  "prompts": {},
+  "sessions": {
+    "s_34b91e56a03ba2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cc3323a8-d226-4f1e-94a5-c6424e49e2e7",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "JinxCappa <git@jinxcappa.dev>"
+    }
+  }
+}
