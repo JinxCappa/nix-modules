@@ -204,6 +204,7 @@ in {
             nixpkgs.hostPlatform = arch;
             nixpkgs.overlays = overlays;
             nixpkgs.config.allowUnfree = true;
+            networking.hostName = lib.mkDefault hostname;
           }
         ] ++ commonNixosModules ++ discoveredNixosModules ++ [
           path
