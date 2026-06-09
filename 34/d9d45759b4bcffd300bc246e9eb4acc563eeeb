@@ -1,0 +1,36 @@
+modules/nixos/watcher/default.nix
+  s_b4563c59d3c43e::t_7bc723d66e0579 423
+  s_b4563c59d3c43e::t_531603d613d0eb 581-583,591-594
+  s_b4563c59d3c43e::t_6c1c8676e5c055 368
+  s_b4563c59d3c43e::t_ca2e0cd2e0c5ce 345-347
+  s_b4563c59d3c43e::t_0e4ce3e90ce23e 296-298,302-304
+  s_b4563c59d3c43e::t_94c924b703145e 209-241
+  s_b4563c59d3c43e::t_25b7aa2cad9b58 625-627,629-632
+  s_b4563c59d3c43e::t_cbf36ed96f5972 776-781
+  s_b4563c59d3c43e::t_6fa9ff3c9ff2fd 453-454,456-457,459-466
+  s_b4563c59d3c43e::t_5287805866c0ec 399-405
+  s_b4563c59d3c43e::t_caed3e8d209f11 411
+  s_b4563c59d3c43e::t_4995d023b694f3 442-443,445
+  s_b4563c59d3c43e::t_d111384ab273c5 505-508
+  s_b4563c59d3c43e::t_c8fe1d94e01bdd 429
+  s_b4563c59d3c43e::t_d621cb1d57a08a 572,574
+  s_b4563c59d3c43e::t_a8560b83bc102d 121-137
+  s_b4563c59d3c43e::t_ecea497368ae3a 638
+  s_b4563c59d3c43e::t_a0351e5b341999 417
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "34d9d45759b4bcffd300bc246e9eb4acc563eeeb",
+  "prompts": {},
+  "sessions": {
+    "s_b4563c59d3c43e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f52c5b67-3aba-41eb-885a-aae3de93ba21",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "JinxCappa <git@jinxcappa.dev>"
+    }
+  }
+}
