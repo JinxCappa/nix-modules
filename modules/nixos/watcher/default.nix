@@ -8,17 +8,6 @@ let
   # State directory for persistent data
   stateDir = "/var/lib/watcher";
 
-  # Convert duration string to seconds for timeout calculations
-  durationToSeconds = duration:
-    let
-      match = builtins.match "([0-9]+)(s|m|h)" duration;
-      value = if match != null then toInt (elemAt match 0) else 30;
-      unit = if match != null then elemAt match 1 else "s";
-    in
-    if unit == "h" then value * 3600
-    else if unit == "m" then value * 60
-    else value;
-
   # Generate YAML config from Nix options
   configYaml = pkgs.writeText "watcher-config.yaml" (builtins.toJSON {
     settings = {
@@ -129,6 +118,23 @@ let
       systemctl show "$service.service" --property=InvocationID --value 2>/dev/null || echo ""
     }
 
+    # Convert a duration (e.g. 10s, 1m, 1h, or a bare number) to whole
+    # seconds. curl --max-time and nc -w require an integer count.
+    duration_to_seconds() {
+      local d="$1" num unit
+      num=$(echo "$d" | grep -oE '^[0-9]+' || echo "")
+      if [[ -z "$num" ]]; then
+        echo "10"
+        return
+      fi
+      unit=$(echo "$d" | grep -oE '[smh]$' || echo "s")
+      case "$unit" in
+        h) echo $((num * 3600)) ;;
+        m) echo $((num * 60)) ;;
+        *) echo "$num" ;;
+      esac
+    }
+
     # HTTP health check
     check_health_http() {
       local url="$1"
@@ -200,6 +206,39 @@ let
       echo "$count" > "$STATE_DIR/health_failures_$service"
     }
 
+    # Cumulative, monotonic restart total (separate from the trimmed
+    # restarts_ window log used for rate limiting). Never reset, so it is
+    # safe to expose as a prometheus counter.
+    get_restart_total() {
+      local file="$STATE_DIR/restart_total_$1"
+      if [[ -f "$file" ]]; then cat "$file"; else echo "0"; fi
+    }
+
+    incr_restart_total() {
+      local file="$STATE_DIR/restart_total_$1"
+      local n
+      n=$(get_restart_total "$1")
+      n=$((n + 1))
+      echo "$n" > "$file"
+      echo "$n"
+    }
+
+    # Cumulative, monotonic health-failure total (separate from the
+    # consecutive-failure counter used for the restart threshold).
+    get_health_failtotal() {
+      local file="$STATE_DIR/health_failtotal_$1"
+      if [[ -f "$file" ]]; then cat "$file"; else echo "0"; fi
+    }
+
+    incr_health_failtotal() {
+      local file="$STATE_DIR/health_failtotal_$1"
+      local n
+      n=$(get_health_failtotal "$1")
+      n=$((n + 1))
+      echo "$n" > "$file"
+      echo "$n"
+    }
+
     # Check rate limiting
     check_rate_limit() {
       local service="$1"
@@ -254,10 +293,15 @@ let
       local restart_log="$STATE_DIR/restarts_$service"
       echo "$(date +%s)" >> "$restart_log"
 
-      # Clean old entries (keep last 100)
+      # Clean old entries (keep last 100). This window log is only used for
+      # rate limiting; the cumulative counter is tracked separately so it
+      # never decreases when this log is trimmed.
       if [[ -f "$restart_log" ]]; then
         tail -100 "$restart_log" > "$restart_log.tmp" && mv "$restart_log.tmp" "$restart_log"
       fi
+
+      # Bump the monotonic counter used for metrics.
+      incr_restart_total "$service" > /dev/null
     }
 
     # Restart a service
@@ -298,7 +342,9 @@ let
 
       local needs_restart=1
 
-      for dep in $dep_list; do
+      # Read on a dedicated fd so nothing in the body can swallow the list.
+      while IFS= read -r dep <&3; do
+        [[ -n "$dep" ]] || continue
         local current_id
         current_id=$(get_invocation_id "$dep")
         local stored_id=""
@@ -319,7 +365,7 @@ let
           log_info "Dependency $dep of $service has restarted (invocation ID changed)"
           needs_restart=0
         fi
-      done
+      done 3<<< "$dep_list"
 
       return $needs_restart
     }
@@ -350,30 +396,37 @@ let
       local vm_endpoint
       vm_endpoint=$(get_setting "$config" "metrics.victoriametrics.endpoint" "")
 
+      # Build the extra-label suffix (e.g. ,env="production") applied to every
+      # metric line. Empty when no labels are configured.
+      local extra_labels
+      extra_labels=$(echo "$config" | ${pkgs.yq-go}/bin/yq -r \
+        '.settings.metrics.victoriametrics.labels // {} | to_entries | map("," + .key + "=\"" + .value + "\"") | join("")' \
+        2>/dev/null || echo "")
+
       # Build metrics output
       local metrics=""
       metrics+="# HELP watcher_service_restarts_total Total number of service restarts triggered by watcher\n"
       metrics+="# TYPE watcher_service_restarts_total counter\n"
       for service in "''${!METRICS_RESTARTS[@]}"; do
-        metrics+="watcher_service_restarts_total{service=\"$service\"} ''${METRICS_RESTARTS[$service]}\n"
+        metrics+="watcher_service_restarts_total{service=\"$service\"''${extra_labels}} ''${METRICS_RESTARTS[$service]}\n"
       done
 
       metrics+="# HELP watcher_service_health_failures_total Total health check failures\n"
       metrics+="# TYPE watcher_service_health_failures_total counter\n"
       for service in "''${!METRICS_HEALTH_FAILURES[@]}"; do
-        metrics+="watcher_service_health_failures_total{service=\"$service\"} ''${METRICS_HEALTH_FAILURES[$service]}\n"
+        metrics+="watcher_service_health_failures_total{service=\"$service\"''${extra_labels}} ''${METRICS_HEALTH_FAILURES[$service]}\n"
       done
 
       metrics+="# HELP watcher_service_up Service health status (1=healthy, 0=unhealthy)\n"
       metrics+="# TYPE watcher_service_up gauge\n"
       for service in "''${!METRICS_UP[@]}"; do
-        metrics+="watcher_service_up{service=\"$service\"} ''${METRICS_UP[$service]}\n"
+        metrics+="watcher_service_up{service=\"$service\"''${extra_labels}} ''${METRICS_UP[$service]}\n"
       done
 
       metrics+="# HELP watcher_rate_limited Whether service is rate limited (1=yes, 0=no)\n"
       metrics+="# TYPE watcher_rate_limited gauge\n"
       for service in "''${!METRICS_RATE_LIMITED[@]}"; do
-        metrics+="watcher_rate_limited{service=\"$service\"} ''${METRICS_RATE_LIMITED[$service]}\n"
+        metrics+="watcher_rate_limited{service=\"$service\"''${extra_labels}} ''${METRICS_RATE_LIMITED[$service]}\n"
       done
 
       # Write to textfile
@@ -386,17 +439,10 @@ let
         log_info "Wrote metrics to $textfile_path"
       fi
 
-      # Push to VictoriaMetrics
+      # Push to VictoriaMetrics. Extra labels are already baked into every
+      # metric line above, so the same payload is pushed verbatim.
       if [[ "$vm_enable" == "true" && -n "$vm_endpoint" ]]; then
-        local extra_labels=""
-        # Get extra labels (simplified - assumes flat structure)
-        local labels_json
-        labels_json=$(get_setting "$config" "metrics.victoriametrics.labels" "{}")
-        if [[ "$labels_json" != "{}" && "$labels_json" != "null" ]]; then
-          # Add extra labels to each metric line
-          log_info "Pushing metrics to VictoriaMetrics at $vm_endpoint"
-        fi
-
+        log_info "Pushing metrics to VictoriaMetrics at $vm_endpoint"
         echo -e "$metrics" | ${pkgs.curl}/bin/curl -sf -X POST \
           --data-binary @- \
           "$vm_endpoint" > /dev/null 2>&1 || \
@@ -404,15 +450,20 @@ let
       fi
     }
 
-    # Load restart counts from state
+    # Load cumulative counter values from durable state so metrics survive
+    # restarts of the watcher itself and stay monotonic.
     load_restart_counts() {
-      for file in "$STATE_DIR"/restarts_*; do
+      local file service
+      for file in "$STATE_DIR"/restart_total_*; do
         if [[ -f "$file" ]]; then
-          local service
-          service=$(basename "$file" | sed 's/restarts_//')
-          local count
-          count=$(wc -l < "$file" 2>/dev/null || echo "0")
-          METRICS_RESTARTS[$service]=$count
+          service=$(basename "$file" | sed 's/restart_total_//')
+          METRICS_RESTARTS[$service]=$(cat "$file" 2>/dev/null || echo "0")
+        fi
+      done
+      for file in "$STATE_DIR"/health_failtotal_*; do
+        if [[ -f "$file" ]]; then
+          service=$(basename "$file" | sed 's/health_failtotal_//')
+          METRICS_HEALTH_FAILURES[$service]=$(cat "$file" 2>/dev/null || echo "0")
         fi
       done
     }
@@ -451,7 +502,10 @@ let
       local services_healthy=0
       local services_restarted=0
 
-      for service in $services; do
+      # Read on a dedicated fd (3) so exec health checks reading stdin can't
+      # consume the service list mid-loop.
+      while IFS= read -r service <&3; do
+        [[ -n "$service" ]] || continue
         local enabled
         enabled=$(get_service_prop "$config" "$service" "enable" "true")
 
@@ -515,16 +569,18 @@ let
             local failures_threshold
             failures_threshold=$(get_service_prop "$config" "$service" "healthCheck.failuresBeforeRestart" "3")
 
-            # Convert timeout to seconds
+            # Convert timeout to whole seconds (handles s/m/h suffixes)
             local timeout_secs
-            timeout_secs=$(echo "$health_timeout" | sed 's/s$//')
+            timeout_secs=$(duration_to_seconds "$health_timeout")
 
             if ! do_health_check "$health_type" "$health_target" "$timeout_secs"; then
               local current_failures
               current_failures=$(get_health_failures "$service")
               current_failures=$((current_failures + 1))
               set_health_failures "$service" "$current_failures"
-              METRICS_HEALTH_FAILURES[$service]=$current_failures
+              # Cumulative, monotonic total for metrics (not the consecutive
+              # counter, which can reset).
+              METRICS_HEALTH_FAILURES[$service]=$(incr_health_failtotal "$service")
 
               log_warn "Health check failed for $service ($current_failures/$failures_threshold)"
 
@@ -532,8 +588,10 @@ let
                 needs_restart=true
                 restart_reason="health check failed $current_failures times"
                 METRICS_UP[$service]=0
-                # Reset failure counter
-                set_health_failures "$service" "0"
+                # The consecutive-failure counter is reset only when a restart
+                # actually succeeds (see below); the restart may be deferred by
+                # the rate limiter, and we must keep wanting a restart until it
+                # goes through.
               fi
             else
               # Health check passed, reset counter
@@ -564,14 +622,20 @@ let
         if [[ "$needs_restart" == true ]]; then
           if check_rate_limit "$service" "$max_restarts" "$window" "$global_cooldown"; then
             if do_restart "$service" "$restart_reason"; then
-              METRICS_RESTARTS[$service]=$((''${METRICS_RESTARTS[$service]} + 1))
+              # record_restart already bumped the durable total; read it back
+              # so the exported metric stays consistent.
+              METRICS_RESTARTS[$service]=$(get_restart_total "$service")
               services_restarted=$((services_restarted + 1))
+              # A successful restart clears the consecutive health-failure
+              # counter (deferred from the health check so a rate-limited
+              # service keeps wanting a restart until it actually happens).
+              set_health_failures "$service" "0"
             fi
           else
             METRICS_RATE_LIMITED[$service]=1
           fi
         fi
-      done
+      done 3<<< "$services"
 
       # Write metrics
       write_metrics "$config"
@@ -709,6 +773,12 @@ in
               default = false;
               description = ''
                 Restart service when it becomes inactive (stopped).
+
+                Do not enable this for `Type=oneshot` units (timers, one-off
+                jobs): a oneshot that has completed successfully reports as
+                inactive, so the watcher would restart it on every tick. Use
+                this only for long-running services that should never be
+                stopped.
               '';
             };
 
